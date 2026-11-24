@@ -1,0 +1,374 @@
+{
+  "entities": {
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Trusted Admin privilege record keyed by user UID.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "format": "email", "maxLength": 254 },
+        "grantedBy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "grantedBy", "createdAt"]
+    },
+    "UserPrivateProfile": {
+      "title": "UserPrivateProfile",
+      "description": "Private employee account record containing PII and role assignment.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "format": "email", "maxLength": 254 },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "jobTitle": { "type": "string", "maxLength": 120 },
+        "phone": { "type": "string", "maxLength": 40 },
+        "role": { "type": "string", "enum": ["admin", "team_lead", "member"] },
+        "status": { "type": "string", "enum": ["active", "pending", "disabled"] },
+        "departmentId": { "type": "string", "maxLength": 128 },
+        "teamId": { "type": "string", "maxLength": 128 },
+        "avatarUrl": { "type": "string", "maxLength": 1000 },
+        "workspaceId": { "type": "string", "enum": ["nex-agency"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "displayName", "role", "status", "workspaceId", "createdAt", "updatedAt"]
+    },
+    "DirectoryEntry": {
+      "title": "DirectoryEntry",
+      "description": "Workspace-visible employee card without private PII.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "jobTitle": { "type": "string", "maxLength": 120 },
+        "role": { "type": "string", "enum": ["admin", "team_lead", "member"] },
+        "status": { "type": "string", "enum": ["active", "pending", "disabled"] },
+        "departmentId": { "type": "string", "maxLength": 128 },
+        "teamId": { "type": "string", "maxLength": 128 },
+        "avatarUrl": { "type": "string", "maxLength": 1000 },
+        "workspaceId": { "type": "string", "enum": ["nex-agency"] },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "displayName", "role", "status", "workspaceId", "updatedAt"]
+    },
+    "RoleAssignment": {
+      "title": "RoleAssignment",
+      "description": "Authoritative RBAC role record for a workspace employee.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "role": { "type": "string", "enum": ["admin", "team_lead", "member"] },
+        "active": { "type": "boolean" },
+        "departmentId": { "type": "string", "maxLength": 128 },
+        "teamId": { "type": "string", "maxLength": 128 },
+        "inviteId": { "type": "string", "maxLength": 128 },
+        "updatedBy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "role", "active", "updatedBy", "updatedAt"]
+    },
+    "EmployeeInvite": {
+      "title": "EmployeeInvite",
+      "description": "Admin-provisioned employee invitation binding email to role, department, and team.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "format": "email", "maxLength": 254 },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "jobTitle": { "type": "string", "maxLength": 120 },
+        "role": { "type": "string", "enum": ["admin", "team_lead", "member"] },
+        "departmentId": { "type": "string", "maxLength": 128 },
+        "teamId": { "type": "string", "maxLength": 128 },
+        "status": { "type": "string", "enum": ["pending", "claimed", "revoked"] },
+        "createdBy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "email", "displayName", "role", "status", "createdBy", "createdAt", "updatedAt"]
+    },
+    "Department": {
+      "title": "Department",
+      "description": "Organizational department created by Admins.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "description": { "type": "string", "maxLength": 500 },
+        "headUserId": { "type": "string", "maxLength": 128 },
+        "workspaceId": { "type": "string", "enum": ["nex-agency"] },
+        "createdBy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "workspaceId", "createdBy", "createdAt", "updatedAt"]
+    },
+    "Team": {
+      "title": "Team",
+      "description": "Agency delivery team with assigned Team Lead and bounded member list.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "description": { "type": "string", "maxLength": 500 },
+        "departmentId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "leadId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "memberIds": { "type": "array" },
+        "workspaceId": { "type": "string", "enum": ["nex-agency"] },
+        "createdBy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "departmentId", "leadId", "memberIds", "workspaceId", "createdBy", "createdAt", "updatedAt"]
+    },
+    "Project": {
+      "title": "Project",
+      "description": "Client or internal agency project linked to a department and team.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 140 },
+        "code": { "type": "string", "minLength": 2, "maxLength": 20, "pattern": "^[A-Z0-9_\\-]+$" },
+        "description": { "type": "string", "maxLength": 2000 },
+        "departmentId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "teamId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "leadId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "status": { "type": "string", "enum": ["Planning", "Active", "On Hold", "Completed"] },
+        "startDate": { "type": "string", "maxLength": 20 },
+        "dueDate": { "type": "string", "maxLength": 20 },
+        "workspaceId": { "type": "string", "enum": ["nex-agency"] },
+        "createdBy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "code", "departmentId", "teamId", "leadId", "status", "workspaceId", "createdBy", "createdAt", "updatedAt"]
+    },
+    "Task": {
+      "title": "Task",
+      "description": "Core work item with atomic NEX-YYYY-0001 code, assignees, schedule, checklist, and approval workflow.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "taskCode": { "type": "string", "minLength": 13, "maxLength": 16, "pattern": "^NEX-[0-9]{4}-[0-9]{4}$" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "description": { "type": "string", "maxLength": 8000 },
+        "projectId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "departmentId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "teamId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "teamLeadId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "assigneeIds": { "type": "array" },
+        "priority": { "type": "string", "enum": ["Low", "Medium", "High", "Urgent"] },
+        "status": { "type": "string", "enum": ["To Do", "In Progress", "In Review", "Revision Required", "On Hold", "Completed"] },
+        "startDate": { "type": "string", "maxLength": 20 },
+        "dueDate": { "type": "string", "maxLength": 20 },
+        "dueTime": { "type": "string", "maxLength": 10 },
+        "estimatedHours": { "type": "number" },
+        "loggedHours": { "type": "number" },
+        "checklist": { "type": "array" },
+        "referenceLinks": { "type": "array" },
+        "attachmentCount": { "type": "number" },
+        "submissionNote": { "type": "string", "maxLength": 2000 },
+        "submittedBy": { "type": "string", "maxLength": 128 },
+        "submittedAt": { "type": "string", "maxLength": 40 },
+        "reviewedBy": { "type": "string", "maxLength": 128 },
+        "reviewedAt": { "type": "string", "maxLength": 40 },
+        "reviewStatus": { "type": "string", "enum": ["None", "Pending", "Approved", "Revision Requested"] },
+        "workspaceId": { "type": "string", "enum": ["nex-agency"] },
+        "createdBy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "taskCode", "title", "projectId", "departmentId", "teamId", "teamLeadId", "assigneeIds", "priority", "status", "dueDate", "estimatedHours", "loggedHours", "checklist", "referenceLinks", "attachmentCount", "reviewStatus", "workspaceId", "createdBy", "createdAt", "updatedAt"]
+    },
+    "TaskComment": {
+      "title": "TaskComment",
+      "description": "Discussion comment on a task.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "taskId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "authorId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "authorName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "authorRole": { "type": "string", "enum": ["admin", "team_lead", "member"] },
+        "body": { "type": "string", "minLength": 1, "maxLength": 4000 },
+        "participantIds": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "taskId", "authorId", "authorName", "authorRole", "body", "participantIds", "createdAt"]
+    },
+    "TaskAttachment": {
+      "title": "TaskAttachment",
+      "description": "Deliverable or reference file stored in Firebase Storage.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "taskId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "fileName": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "fileSize": { "type": "number" },
+        "contentType": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "storagePath": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "downloadUrl": { "type": "string", "minLength": 1, "maxLength": 2000 },
+        "uploadedBy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "uploadedByName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "category": { "type": "string", "enum": ["brief", "deliverable"] },
+        "participantIds": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "taskId", "fileName", "fileSize", "contentType", "storagePath", "downloadUrl", "uploadedBy", "uploadedByName", "category", "participantIds", "createdAt"]
+    },
+    "TaskReview": {
+      "title": "TaskReview",
+      "description": "Audit record of task submission, approval, or revision request.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "taskId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "taskCode": { "type": "string", "minLength": 13, "maxLength": 16, "pattern": "^NEX-[0-9]{4}-[0-9]{4}$" },
+        "action": { "type": "string", "enum": ["Submitted", "Approved", "Revision Requested"] },
+        "actorId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "actorName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "actorRole": { "type": "string", "enum": ["admin", "team_lead", "member"] },
+        "notes": { "type": "string", "maxLength": 3000 },
+        "attachmentUrls": { "type": "array" },
+        "participantIds": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "taskId", "taskCode", "action", "actorId", "actorName", "actorRole", "notes", "attachmentUrls", "participantIds", "createdAt"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "User-targeted real-time notification.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "recipientId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "message": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "type": { "type": "string", "enum": ["assignment", "submission", "approval", "revision", "comment", "system"] },
+        "taskId": { "type": "string", "maxLength": 128 },
+        "taskCode": { "type": "string", "maxLength": 20 },
+        "read": { "type": "boolean" },
+        "createdBy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "recipientId", "title", "message", "type", "read", "createdBy", "createdAt"]
+    },
+    "ActivityLog": {
+      "title": "ActivityLog",
+      "description": "Immutable activity audit trail entry.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "actorId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "actorName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "actorRole": { "type": "string", "enum": ["admin", "team_lead", "member"] },
+        "action": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "entityType": { "type": "string", "enum": ["task", "project", "team", "department", "user", "review", "time"] },
+        "entityId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "entityLabel": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "details": { "type": "string", "maxLength": 500 },
+        "taskId": { "type": "string", "maxLength": 128 },
+        "teamId": { "type": "string", "maxLength": 128 },
+        "participantIds": { "type": "array" },
+        "workspaceId": { "type": "string", "enum": ["nex-agency"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "actorId", "actorName", "actorRole", "action", "entityType", "entityId", "entityLabel", "participantIds", "workspaceId", "createdAt"]
+    },
+    "TimeEntry": {
+      "title": "TimeEntry",
+      "description": "Logged work hours on a task.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "taskId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "taskCode": { "type": "string", "minLength": 13, "maxLength": 16, "pattern": "^NEX-[0-9]{4}-[0-9]{4}$" },
+        "projectId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "teamLeadId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "userName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "hours": { "type": "number" },
+        "note": { "type": "string", "maxLength": 500 },
+        "date": { "type": "string", "minLength": 8, "maxLength": 20 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "taskId", "taskCode", "projectId", "teamLeadId", "userId", "userName", "hours", "date", "createdAt"]
+    },
+    "TaskCounter": {
+      "title": "TaskCounter",
+      "description": "Yearly sequential counter for atomic NEX-YYYY-0001 ID generation.",
+      "type": "object",
+      "properties": {
+        "year": { "type": "number" },
+        "seq": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["year", "seq", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/admins/{userId}": {
+      "schema": { "$ref": "#/entities/AdminRecord" },
+      "description": "Admin privilege documents"
+    },
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserPrivateProfile" },
+      "description": "Private employee profiles with PII"
+    },
+    "/directory/{userId}": {
+      "schema": { "$ref": "#/entities/DirectoryEntry" },
+      "description": "Workspace employee directory without PII"
+    },
+    "/roles/{userId}": {
+      "schema": { "$ref": "#/entities/RoleAssignment" },
+      "description": "Authoritative RBAC role assignments"
+    },
+    "/invites/{inviteId}": {
+      "schema": { "$ref": "#/entities/EmployeeInvite" },
+      "description": "Admin-created employee invitations"
+    },
+    "/departments/{departmentId}": {
+      "schema": { "$ref": "#/entities/Department" },
+      "description": "Agency departments"
+    },
+    "/teams/{teamId}": {
+      "schema": { "$ref": "#/entities/Team" },
+      "description": "Agency delivery teams"
+    },
+    "/projects/{projectId}": {
+      "schema": { "$ref": "#/entities/Project" },
+      "description": "Agency projects"
+    },
+    "/tasks/{taskId}": {
+      "schema": { "$ref": "#/entities/Task" },
+      "description": "Tasks with atomic NEX-YYYY-0001 IDs"
+    },
+    "/taskComments/{commentId}": {
+      "schema": { "$ref": "#/entities/TaskComment" },
+      "description": "Task discussion comments"
+    },
+    "/taskAttachments/{attachmentId}": {
+      "schema": { "$ref": "#/entities/TaskAttachment" },
+      "description": "Task file attachment metadata"
+    },
+    "/taskReviews/{reviewId}": {
+      "schema": { "$ref": "#/entities/TaskReview" },
+      "description": "Submission and review audit history"
+    },
+    "/notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/Notification" },
+      "description": "Per-user task notifications"
+    },
+    "/activityLogs/{logId}": {
+      "schema": { "$ref": "#/entities/ActivityLog" },
+      "description": "Workspace activity log entries"
+    },
+    "/timeEntries/{entryId}": {
+      "schema": { "$ref": "#/entities/TimeEntry" },
+      "description": "Logged hours against tasks"
+    },
+    "/counters/{counterId}": {
+      "schema": { "$ref": "#/entities/TaskCounter" },
+      "description": "Atomic sequential ID counters"
+    }
+  }
+}

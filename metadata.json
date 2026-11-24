@@ -1,0 +1,8 @@
+{
+  "name": "Nex Task Manager",
+  "description": "Production agency task management platform with role-based dashboards, atomic NEX-YYYY-0001 task tracking, drag-and-drop Kanban, file deliverables, and review workflows.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

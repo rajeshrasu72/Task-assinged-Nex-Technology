@@ -1,0 +1,722 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // =========================================================================
+    // 1. GLOBAL DEFAULT-DENY CATCH-ALL
+    // =========================================================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // =========================================================================
+    // 2. REUSABLE PRIMITIVES & IDENTITY HELPERS
+    // =========================================================================
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isSignedIn() { return request.auth != null; }
+    function isEmailVerified() { return isSignedIn() && request.auth.token.email_verified == true; }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidNonEmptyString(val, maxLen) {
+      return val is string && val.size() >= 1 && val.size() <= maxLen;
+    }
+
+    function isValidOptionalString(val, maxLen) {
+      return val is string && val.size() <= maxLen;
+    }
+
+    function isOwnerAdmin() {
+      return isEmailVerified() && request.auth.token.email == 'rasurajesh72@gmail.com';
+    }
+
+    function isAdmin() {
+      return isEmailVerified() && (
+        isOwnerAdmin() ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function hasActiveRole() {
+      return isEmailVerified() &&
+        exists(/databases/$(database)/documents/roles/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/roles/$(request.auth.uid)).data.active == true;
+    }
+
+    function isActiveMember() {
+      return isAdmin() || hasActiveRole();
+    }
+
+    function isTeamLead() {
+      return isEmailVerified() &&
+        hasActiveRole() &&
+        get(/databases/$(database)/documents/roles/$(request.auth.uid)).data.role == 'team_lead';
+    }
+
+    function isLeadOrAdmin() {
+      return isAdmin() || isTeamLead();
+    }
+
+    // =========================================================================
+    // 3. VALIDATION BLUEPRINTS (ANTI-UPDATE-GAP)
+    // =========================================================================
+
+    function isValidAdminRecord(data, userId) {
+      return data.keys().hasAll(['uid', 'email', 'grantedBy', 'createdAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'grantedBy', 'createdAt']) &&
+        isValidId(data.uid) &&
+        data.uid == userId &&
+        isValidNonEmptyString(data.email, 254) &&
+        isValidId(data.grantedBy) &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidUserPrivateProfile(data, userId) {
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'role', 'status', 'workspaceId', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'displayName', 'jobTitle', 'phone', 'role', 'status', 'departmentId', 'teamId', 'avatarUrl', 'workspaceId', 'createdAt', 'updatedAt']) &&
+        isValidId(data.uid) &&
+        data.uid == userId &&
+        isValidNonEmptyString(data.email, 254) &&
+        isValidNonEmptyString(data.displayName, 120) &&
+        (!('jobTitle' in data) || isValidOptionalString(data.jobTitle, 120)) &&
+        (!('phone' in data) || isValidOptionalString(data.phone, 40)) &&
+        data.role in ['admin', 'team_lead', 'member'] &&
+        data.status in ['active', 'pending', 'disabled'] &&
+        (!('departmentId' in data) || isValidOptionalString(data.departmentId, 128)) &&
+        (!('teamId' in data) || isValidOptionalString(data.teamId, 128)) &&
+        (!('avatarUrl' in data) || isValidOptionalString(data.avatarUrl, 1000)) &&
+        data.workspaceId == 'nex-agency' &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidDirectoryEntry(data, userId) {
+      return data.keys().hasAll(['uid', 'displayName', 'role', 'status', 'workspaceId', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'displayName', 'jobTitle', 'role', 'status', 'departmentId', 'teamId', 'avatarUrl', 'workspaceId', 'updatedAt']) &&
+        isValidId(data.uid) &&
+        data.uid == userId &&
+        isValidNonEmptyString(data.displayName, 120) &&
+        (!('jobTitle' in data) || isValidOptionalString(data.jobTitle, 120)) &&
+        data.role in ['admin', 'team_lead', 'member'] &&
+        data.status in ['active', 'pending', 'disabled'] &&
+        (!('departmentId' in data) || isValidOptionalString(data.departmentId, 128)) &&
+        (!('teamId' in data) || isValidOptionalString(data.teamId, 128)) &&
+        (!('avatarUrl' in data) || isValidOptionalString(data.avatarUrl, 1000)) &&
+        data.workspaceId == 'nex-agency' &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidRoleAssignment(data, userId) {
+      return data.keys().hasAll(['uid', 'role', 'active', 'updatedBy', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'role', 'active', 'departmentId', 'teamId', 'inviteId', 'updatedBy', 'updatedAt']) &&
+        isValidId(data.uid) &&
+        data.uid == userId &&
+        data.role in ['admin', 'team_lead', 'member'] &&
+        data.active is bool &&
+        (!('departmentId' in data) || isValidOptionalString(data.departmentId, 128)) &&
+        (!('teamId' in data) || isValidOptionalString(data.teamId, 128)) &&
+        (!('inviteId' in data) || isValidOptionalString(data.inviteId, 128)) &&
+        isValidId(data.updatedBy) &&
+        data.updatedAt is timestamp;
+    }
+
+    function hasValidPendingInvite(inviteId, expectedRole) {
+      return isValidId(inviteId) &&
+        exists(/databases/$(database)/documents/invites/$(inviteId)) &&
+        get(/databases/$(database)/documents/invites/$(inviteId)).data.email == request.auth.token.email &&
+        get(/databases/$(database)/documents/invites/$(inviteId)).data.status == 'pending' &&
+        get(/databases/$(database)/documents/invites/$(inviteId)).data.role == expectedRole &&
+        expectedRole in ['member', 'team_lead'] &&
+        getAfter(/databases/$(database)/documents/invites/$(inviteId)).data.status == 'claimed';
+    }
+
+    function isValidEmployeeInvite(data, inviteId) {
+      return data.keys().hasAll(['id', 'email', 'displayName', 'role', 'status', 'createdBy', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'email', 'displayName', 'jobTitle', 'role', 'departmentId', 'teamId', 'status', 'createdBy', 'createdAt', 'updatedAt']) &&
+        isValidId(data.id) &&
+        data.id == inviteId &&
+        isValidNonEmptyString(data.email, 254) &&
+        isValidNonEmptyString(data.displayName, 120) &&
+        (!('jobTitle' in data) || isValidOptionalString(data.jobTitle, 120)) &&
+        data.role in ['admin', 'team_lead', 'member'] &&
+        (!('departmentId' in data) || isValidOptionalString(data.departmentId, 128)) &&
+        (!('teamId' in data) || isValidOptionalString(data.teamId, 128)) &&
+        data.status in ['pending', 'claimed', 'revoked'] &&
+        isValidId(data.createdBy) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidDepartment(data, departmentId) {
+      return data.keys().hasAll(['id', 'name', 'workspaceId', 'createdBy', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'name', 'description', 'headUserId', 'workspaceId', 'createdBy', 'createdAt', 'updatedAt']) &&
+        isValidId(data.id) &&
+        data.id == departmentId &&
+        isValidNonEmptyString(data.name, 100) &&
+        (!('description' in data) || isValidOptionalString(data.description, 500)) &&
+        (!('headUserId' in data) || isValidOptionalString(data.headUserId, 128)) &&
+        data.workspaceId == 'nex-agency' &&
+        isValidId(data.createdBy) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidTeam(data, teamId) {
+      return data.keys().hasAll(['id', 'name', 'departmentId', 'leadId', 'memberIds', 'workspaceId', 'createdBy', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'name', 'description', 'departmentId', 'leadId', 'memberIds', 'workspaceId', 'createdBy', 'createdAt', 'updatedAt']) &&
+        isValidId(data.id) &&
+        data.id == teamId &&
+        isValidNonEmptyString(data.name, 100) &&
+        (!('description' in data) || isValidOptionalString(data.description, 500)) &&
+        isValidId(data.departmentId) &&
+        isValidId(data.leadId) &&
+        data.memberIds is list &&
+        data.memberIds.size() <= 50 &&
+        (data.memberIds.size() == 0 || isValidId(data.memberIds[0])) &&
+        data.workspaceId == 'nex-agency' &&
+        isValidId(data.createdBy) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidProject(data, projectId) {
+      return data.keys().hasAll(['id', 'name', 'code', 'departmentId', 'teamId', 'leadId', 'status', 'workspaceId', 'createdBy', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'name', 'code', 'description', 'departmentId', 'teamId', 'leadId', 'status', 'startDate', 'dueDate', 'workspaceId', 'createdBy', 'createdAt', 'updatedAt']) &&
+        isValidId(data.id) &&
+        data.id == projectId &&
+        isValidNonEmptyString(data.name, 140) &&
+        data.code is string && data.code.size() >= 2 && data.code.size() <= 20 && data.code.matches('^[A-Z0-9_\\-]+$') &&
+        (!('description' in data) || isValidOptionalString(data.description, 2000)) &&
+        isValidId(data.departmentId) &&
+        isValidId(data.teamId) &&
+        isValidId(data.leadId) &&
+        data.status in ['Planning', 'Active', 'On Hold', 'Completed'] &&
+        (!('startDate' in data) || isValidOptionalString(data.startDate, 20)) &&
+        (!('dueDate' in data) || isValidOptionalString(data.dueDate, 20)) &&
+        data.workspaceId == 'nex-agency' &&
+        isValidId(data.createdBy) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidTask(data, taskId) {
+      return data.keys().hasAll(['id', 'taskCode', 'title', 'projectId', 'departmentId', 'teamId', 'teamLeadId', 'assigneeIds', 'priority', 'status', 'dueDate', 'estimatedHours', 'loggedHours', 'checklist', 'referenceLinks', 'attachmentCount', 'reviewStatus', 'workspaceId', 'createdBy', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'taskCode', 'title', 'description', 'projectId', 'departmentId', 'teamId', 'teamLeadId', 'assigneeIds', 'priority', 'status', 'startDate', 'dueDate', 'dueTime', 'estimatedHours', 'loggedHours', 'checklist', 'referenceLinks', 'attachmentCount', 'submissionNote', 'submittedBy', 'submittedAt', 'reviewedBy', 'reviewedAt', 'reviewStatus', 'workspaceId', 'createdBy', 'createdAt', 'updatedAt']) &&
+        isValidId(data.id) &&
+        data.id == taskId &&
+        data.taskCode is string && data.taskCode.size() >= 13 && data.taskCode.size() <= 16 && data.taskCode.matches('^NEX-[0-9]{4}-[0-9]{4}$') &&
+        isValidNonEmptyString(data.title, 200) &&
+        (!('description' in data) || isValidOptionalString(data.description, 8000)) &&
+        isValidId(data.projectId) &&
+        isValidId(data.departmentId) &&
+        isValidId(data.teamId) &&
+        isValidId(data.teamLeadId) &&
+        data.assigneeIds is list && data.assigneeIds.size() <= 25 &&
+        (data.assigneeIds.size() == 0 || isValidId(data.assigneeIds[0])) &&
+        data.priority in ['Low', 'Medium', 'High', 'Urgent'] &&
+        data.status in ['To Do', 'In Progress', 'In Review', 'Revision Required', 'On Hold', 'Completed'] &&
+        (!('startDate' in data) || isValidOptionalString(data.startDate, 20)) &&
+        isValidNonEmptyString(data.dueDate, 20) &&
+        (!('dueTime' in data) || isValidOptionalString(data.dueTime, 10)) &&
+        (data.estimatedHours is number && data.estimatedHours >= 0 && data.estimatedHours <= 10000) &&
+        (data.loggedHours is number && data.loggedHours >= 0 && data.loggedHours <= 10000) &&
+        data.checklist is list && data.checklist.size() <= 50 &&
+        (data.checklist.size() == 0 || data.checklist[0] is map) &&
+        data.referenceLinks is list && data.referenceLinks.size() <= 20 &&
+        (data.referenceLinks.size() == 0 || data.referenceLinks[0] is map) &&
+        (data.attachmentCount is int && data.attachmentCount >= 0 && data.attachmentCount <= 500) &&
+        (!('submissionNote' in data) || isValidOptionalString(data.submissionNote, 2000)) &&
+        (!('submittedBy' in data) || isValidOptionalString(data.submittedBy, 128)) &&
+        (!('submittedAt' in data) || isValidOptionalString(data.submittedAt, 40)) &&
+        (!('reviewedBy' in data) || isValidOptionalString(data.reviewedBy, 128)) &&
+        (!('reviewedAt' in data) || isValidOptionalString(data.reviewedAt, 40)) &&
+        data.reviewStatus in ['None', 'Pending', 'Approved', 'Revision Requested'] &&
+        data.workspaceId == 'nex-agency' &&
+        isValidId(data.createdBy) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidTaskComment(data, commentId) {
+      return data.keys().hasAll(['id', 'taskId', 'authorId', 'authorName', 'authorRole', 'body', 'participantIds', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'taskId', 'authorId', 'authorName', 'authorRole', 'body', 'participantIds', 'createdAt']) &&
+        isValidId(data.id) &&
+        data.id == commentId &&
+        isValidId(data.taskId) &&
+        isValidId(data.authorId) &&
+        isValidNonEmptyString(data.authorName, 120) &&
+        data.authorRole in ['admin', 'team_lead', 'member'] &&
+        isValidNonEmptyString(data.body, 4000) &&
+        data.participantIds is list && data.participantIds.size() >= 1 && data.participantIds.size() <= 30 &&
+        isValidId(data.participantIds[0]) &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidTaskAttachment(data, attachmentId) {
+      return data.keys().hasAll(['id', 'taskId', 'fileName', 'fileSize', 'contentType', 'storagePath', 'downloadUrl', 'uploadedBy', 'uploadedByName', 'category', 'participantIds', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'taskId', 'fileName', 'fileSize', 'contentType', 'storagePath', 'downloadUrl', 'uploadedBy', 'uploadedByName', 'category', 'participantIds', 'createdAt']) &&
+        isValidId(data.id) &&
+        data.id == attachmentId &&
+        isValidId(data.taskId) &&
+        isValidNonEmptyString(data.fileName, 255) &&
+        (data.fileSize is int && data.fileSize > 0 && data.fileSize <= 26214400) &&
+        isValidNonEmptyString(data.contentType, 128) &&
+        isValidNonEmptyString(data.storagePath, 500) &&
+        isValidNonEmptyString(data.downloadUrl, 2000) &&
+        isValidId(data.uploadedBy) &&
+        isValidNonEmptyString(data.uploadedByName, 120) &&
+        data.category in ['brief', 'deliverable'] &&
+        data.participantIds is list && data.participantIds.size() >= 1 && data.participantIds.size() <= 30 &&
+        isValidId(data.participantIds[0]) &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidTaskReview(data, reviewId) {
+      return data.keys().hasAll(['id', 'taskId', 'taskCode', 'action', 'actorId', 'actorName', 'actorRole', 'notes', 'attachmentUrls', 'participantIds', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'taskId', 'taskCode', 'action', 'actorId', 'actorName', 'actorRole', 'notes', 'attachmentUrls', 'participantIds', 'createdAt']) &&
+        isValidId(data.id) &&
+        data.id == reviewId &&
+        isValidId(data.taskId) &&
+        data.taskCode is string && data.taskCode.size() >= 13 && data.taskCode.size() <= 16 && data.taskCode.matches('^NEX-[0-9]{4}-[0-9]{4}$') &&
+        data.action in ['Submitted', 'Approved', 'Revision Requested'] &&
+        isValidId(data.actorId) &&
+        isValidNonEmptyString(data.actorName, 120) &&
+        data.actorRole in ['admin', 'team_lead', 'member'] &&
+        isValidOptionalString(data.notes, 3000) &&
+        data.attachmentUrls is list && data.attachmentUrls.size() <= 10 &&
+        (data.attachmentUrls.size() == 0 || isValidNonEmptyString(data.attachmentUrls[0], 2000)) &&
+        data.participantIds is list && data.participantIds.size() >= 1 && data.participantIds.size() <= 30 &&
+        isValidId(data.participantIds[0]) &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidNotification(data, notificationId) {
+      return data.keys().hasAll(['id', 'recipientId', 'title', 'message', 'type', 'read', 'createdBy', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'recipientId', 'title', 'message', 'type', 'taskId', 'taskCode', 'read', 'createdBy', 'createdAt']) &&
+        isValidId(data.id) &&
+        data.id == notificationId &&
+        isValidId(data.recipientId) &&
+        isValidNonEmptyString(data.title, 160) &&
+        isValidNonEmptyString(data.message, 500) &&
+        data.type in ['assignment', 'submission', 'approval', 'revision', 'comment', 'system'] &&
+        (!('taskId' in data) || isValidOptionalString(data.taskId, 128)) &&
+        (!('taskCode' in data) || isValidOptionalString(data.taskCode, 20)) &&
+        data.read is bool &&
+        isValidId(data.createdBy) &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidActivityLog(data, logId) {
+      return data.keys().hasAll(['id', 'actorId', 'actorName', 'actorRole', 'action', 'entityType', 'entityId', 'entityLabel', 'participantIds', 'workspaceId', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'actorId', 'actorName', 'actorRole', 'action', 'entityType', 'entityId', 'entityLabel', 'details', 'taskId', 'teamId', 'participantIds', 'workspaceId', 'createdAt']) &&
+        isValidId(data.id) &&
+        data.id == logId &&
+        isValidId(data.actorId) &&
+        isValidNonEmptyString(data.actorName, 120) &&
+        data.actorRole in ['admin', 'team_lead', 'member'] &&
+        isValidNonEmptyString(data.action, 120) &&
+        data.entityType in ['task', 'project', 'team', 'department', 'user', 'review', 'time'] &&
+        isValidId(data.entityId) &&
+        isValidNonEmptyString(data.entityLabel, 200) &&
+        (!('details' in data) || isValidOptionalString(data.details, 500)) &&
+        (!('taskId' in data) || isValidOptionalString(data.taskId, 128)) &&
+        (!('teamId' in data) || isValidOptionalString(data.teamId, 128)) &&
+        data.participantIds is list && data.participantIds.size() >= 1 && data.participantIds.size() <= 30 &&
+        isValidId(data.participantIds[0]) &&
+        data.workspaceId == 'nex-agency' &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidTimeEntry(data, entryId) {
+      return data.keys().hasAll(['id', 'taskId', 'taskCode', 'projectId', 'teamLeadId', 'userId', 'userName', 'hours', 'date', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'taskId', 'taskCode', 'projectId', 'teamLeadId', 'userId', 'userName', 'hours', 'note', 'date', 'createdAt']) &&
+        isValidId(data.id) &&
+        data.id == entryId &&
+        isValidId(data.taskId) &&
+        data.taskCode is string && data.taskCode.size() >= 13 && data.taskCode.size() <= 16 && data.taskCode.matches('^NEX-[0-9]{4}-[0-9]{4}$') &&
+        isValidId(data.projectId) &&
+        isValidId(data.teamLeadId) &&
+        isValidId(data.userId) &&
+        isValidNonEmptyString(data.userName, 120) &&
+        (data.hours is number && data.hours > 0 && data.hours <= 24) &&
+        (!('note' in data) || isValidOptionalString(data.note, 500)) &&
+        data.date is string && data.date.size() >= 8 && data.date.size() <= 20 &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidCounter(data) {
+      return data.keys().hasAll(['year', 'seq', 'updatedAt']) &&
+        data.keys().hasOnly(['year', 'seq', 'updatedAt']) &&
+        (data.year is int && data.year >= 2024 && data.year <= 2100) &&
+        (data.seq is int && data.seq >= 1 && data.seq <= 999999) &&
+        data.updatedAt is timestamp;
+    }
+
+    // =========================================================================
+    // 4. COLLECTION MATCH BLOCKS
+    // =========================================================================
+
+    match /admins/{userId} {
+      allow get: if isValidId(userId) && isEmailVerified() && (userId == request.auth.uid || isAdmin());
+      allow list: if isEmailVerified() && isAdmin();
+      allow create: if isValidId(userId) && isEmailVerified() &&
+        isValidAdminRecord(incoming(), userId) &&
+        incoming().createdAt == request.time &&
+        incoming().grantedBy == request.auth.uid &&
+        (
+          (isOwnerAdmin() && userId == request.auth.uid) ||
+          isAdmin()
+        );
+      allow update: if false;
+      allow delete: if isValidId(userId) && isAdmin() && userId != request.auth.uid;
+    }
+
+    match /users/{userId} {
+      allow get: if isValidId(userId) && isEmailVerified() && (userId == request.auth.uid || isAdmin());
+      allow list: if isEmailVerified() && (isAdmin() || existing().uid == request.auth.uid);
+      allow create: if isValidId(userId) && isEmailVerified() &&
+        isValidUserPrivateProfile(incoming(), userId) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        (
+          isAdmin() ||
+          (userId == request.auth.uid && incoming().email == request.auth.token.email && (
+            (isOwnerAdmin() && incoming().role == 'admin' && incoming().status == 'active') ||
+            (incoming().role in ['member', 'team_lead'])
+          ))
+        );
+      allow update: if isValidId(userId) && isEmailVerified() &&
+        isValidUserPrivateProfile(incoming(), userId) &&
+        incoming().uid == existing().uid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (userId == request.auth.uid &&
+            incoming().role == existing().role &&
+            incoming().status == existing().status &&
+            incoming().email == existing().email &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'jobTitle', 'phone', 'avatarUrl', 'updatedAt']))
+        );
+      allow delete: if isValidId(userId) && isAdmin() && userId != request.auth.uid;
+    }
+
+    match /directory/{userId} {
+      allow get: if isValidId(userId) && isEmailVerified() && (userId == request.auth.uid || isActiveMember());
+      allow list: if isEmailVerified() && isActiveMember() && existing().workspaceId == 'nex-agency';
+      allow create: if isValidId(userId) && isEmailVerified() &&
+        isValidDirectoryEntry(incoming(), userId) &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (userId == request.auth.uid && (
+            (isOwnerAdmin() && incoming().role == 'admin' && incoming().status == 'active') ||
+            (incoming().role in ['member', 'team_lead'])
+          ))
+        );
+      allow update: if isValidId(userId) && isEmailVerified() &&
+        isValidDirectoryEntry(incoming(), userId) &&
+        incoming().uid == existing().uid &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (userId == request.auth.uid &&
+            incoming().role == existing().role &&
+            incoming().status == existing().status &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'jobTitle', 'avatarUrl', 'updatedAt']))
+        );
+      allow delete: if isValidId(userId) && isAdmin() && userId != request.auth.uid;
+    }
+
+    match /roles/{userId} {
+      allow get: if isValidId(userId) && isEmailVerified() && (userId == request.auth.uid || isAdmin());
+      allow list: if isEmailVerified() && (isAdmin() || existing().uid == request.auth.uid);
+      allow create: if isValidId(userId) && isEmailVerified() &&
+        isValidRoleAssignment(incoming(), userId) &&
+        incoming().updatedAt == request.time &&
+        incoming().updatedBy == request.auth.uid && (
+          isAdmin() ||
+          (userId == request.auth.uid && isOwnerAdmin() && incoming().role == 'admin' && incoming().active == true) ||
+          (userId == request.auth.uid && ('inviteId' in incoming()) && incoming().active == true && hasValidPendingInvite(incoming().inviteId, incoming().role)) ||
+          (userId == request.auth.uid && incoming().role == 'member' && incoming().active == false)
+        );
+      allow update: if isValidId(userId) && isAdmin() &&
+        isValidRoleAssignment(incoming(), userId) &&
+        incoming().uid == existing().uid &&
+        incoming().updatedAt == request.time &&
+        incoming().updatedBy == request.auth.uid;
+      allow delete: if isValidId(userId) && isAdmin() && userId != request.auth.uid;
+    }
+
+    match /invites/{inviteId} {
+      allow get: if isValidId(inviteId) && isEmailVerified() && (isAdmin() || existing().email == request.auth.token.email);
+      allow list: if isEmailVerified() && (isAdmin() || existing().email == request.auth.token.email);
+      allow create: if isValidId(inviteId) && isAdmin() &&
+        isValidEmployeeInvite(incoming(), inviteId) &&
+        incoming().createdBy == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(inviteId) && isEmailVerified() &&
+        isValidEmployeeInvite(incoming(), inviteId) &&
+        incoming().id == existing().id &&
+        incoming().createdBy == existing().createdBy &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (existing().email == request.auth.token.email &&
+            existing().status == 'pending' &&
+            incoming().status == 'claimed' &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
+        );
+      allow delete: if isValidId(inviteId) && isAdmin();
+    }
+
+    match /departments/{departmentId} {
+      allow get: if isValidId(departmentId) && isActiveMember();
+      allow list: if isEmailVerified() && isActiveMember() && existing().workspaceId == 'nex-agency';
+      allow create: if isValidId(departmentId) && isAdmin() &&
+        isValidDepartment(incoming(), departmentId) &&
+        incoming().createdBy == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(departmentId) && isAdmin() &&
+        isValidDepartment(incoming(), departmentId) &&
+        incoming().id == existing().id &&
+        incoming().createdBy == existing().createdBy &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time;
+      allow delete: if isValidId(departmentId) && isAdmin();
+    }
+
+    match /teams/{teamId} {
+      allow get: if isValidId(teamId) && isActiveMember();
+      allow list: if isEmailVerified() && isActiveMember() && existing().workspaceId == 'nex-agency';
+      allow create: if isValidId(teamId) && isAdmin() &&
+        isValidTeam(incoming(), teamId) &&
+        exists(/databases/$(database)/documents/departments/$(incoming().departmentId)) &&
+        incoming().createdBy == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(teamId) &&
+        isValidTeam(incoming(), teamId) &&
+        incoming().id == existing().id &&
+        incoming().createdBy == existing().createdBy &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (isTeamLead() && existing().leadId == request.auth.uid &&
+            incoming().leadId == existing().leadId &&
+            incoming().departmentId == existing().departmentId &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['memberIds', 'description', 'updatedAt']))
+        );
+      allow delete: if isValidId(teamId) && isAdmin();
+    }
+
+    match /projects/{projectId} {
+      allow get: if isValidId(projectId) && isActiveMember();
+      allow list: if isEmailVerified() && isActiveMember() && existing().workspaceId == 'nex-agency';
+      allow create: if isValidId(projectId) && isAdmin() &&
+        isValidProject(incoming(), projectId) &&
+        exists(/databases/$(database)/documents/departments/$(incoming().departmentId)) &&
+        exists(/databases/$(database)/documents/teams/$(incoming().teamId)) &&
+        incoming().createdBy == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(projectId) &&
+        isValidProject(incoming(), projectId) &&
+        incoming().id == existing().id &&
+        incoming().createdBy == existing().createdBy &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (isTeamLead() && existing().leadId == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'description', 'dueDate', 'updatedAt']))
+        );
+      allow delete: if isValidId(projectId) && isAdmin();
+    }
+
+    match /counters/{counterId} {
+      allow get: if isValidId(counterId) && isLeadOrAdmin();
+      allow list: if false;
+      allow create: if isValidId(counterId) && isLeadOrAdmin() &&
+        isValidCounter(incoming()) &&
+        incoming().seq == 1 &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(counterId) && isLeadOrAdmin() &&
+        isValidCounter(incoming()) &&
+        incoming().year == existing().year &&
+        incoming().seq == existing().seq + 1 &&
+        incoming().updatedAt == request.time;
+      allow delete: if false;
+    }
+
+    match /tasks/{taskId} {
+      allow get: if isValidId(taskId) && isEmailVerified() && (
+        isAdmin() ||
+        request.auth.uid in existing().assigneeIds ||
+        existing().teamLeadId == request.auth.uid ||
+        existing().createdBy == request.auth.uid
+      );
+      allow list: if isEmailVerified() && (
+        isAdmin() ||
+        request.auth.uid in existing().assigneeIds ||
+        existing().teamLeadId == request.auth.uid ||
+        existing().createdBy == request.auth.uid
+      );
+      allow create: if isValidId(taskId) && isLeadOrAdmin() &&
+        isValidTask(incoming(), taskId) &&
+        exists(/databases/$(database)/documents/projects/$(incoming().projectId)) &&
+        exists(/databases/$(database)/documents/departments/$(incoming().departmentId)) &&
+        exists(/databases/$(database)/documents/teams/$(incoming().teamId)) &&
+        incoming().createdBy == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        incoming().loggedHours == 0 &&
+        incoming().attachmentCount == 0 &&
+        incoming().reviewStatus == 'None';
+
+      allow update: if isValidId(taskId) && isActiveMember() &&
+        isValidTask(incoming(), taskId) &&
+        incoming().id == existing().id &&
+        incoming().taskCode == existing().taskCode &&
+        incoming().createdBy == existing().createdBy &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          // Tier 1: Admin override (can manage all fields including terminal status correction)
+          isAdmin() ||
+          // Tier 2: Assigned Team Lead (cannot edit once Completed except via Admin)
+          (existing().status != 'Completed' &&
+            isTeamLead() && existing().teamLeadId == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'title', 'description', 'assigneeIds', 'priority', 'status',
+              'startDate', 'dueDate', 'dueTime', 'estimatedHours', 'checklist',
+              'referenceLinks', 'reviewedBy', 'reviewedAt', 'reviewStatus', 'updatedAt'
+            ])) ||
+          // Tier 3a: Assigned Member updating checklist / starting work / submitting for review
+          (existing().status != 'Completed' &&
+            request.auth.uid in existing().assigneeIds &&
+            incoming().status in ['To Do', 'In Progress', 'In Review'] &&
+            incoming().reviewStatus in ['None', 'Pending'] &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'checklist', 'submissionNote', 'submittedBy', 'submittedAt',
+              'reviewStatus', 'updatedAt'
+            ])) ||
+          // Tier 3b: Assigned Member incrementing attachmentCount
+          (existing().status != 'Completed' &&
+            (request.auth.uid in existing().assigneeIds || existing().teamLeadId == request.auth.uid) &&
+            incoming().attachmentCount == existing().attachmentCount + 1 &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['attachmentCount', 'updatedAt'])) ||
+          // Tier 3c: Assigned Member or Lead incrementing loggedHours
+          (existing().status != 'Completed' &&
+            (request.auth.uid in existing().assigneeIds || existing().teamLeadId == request.auth.uid) &&
+            incoming().loggedHours >= existing().loggedHours &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['loggedHours', 'updatedAt']))
+        );
+
+      allow delete: if isValidId(taskId) && isAdmin();
+    }
+
+    match /taskComments/{commentId} {
+      allow get: if isValidId(commentId) && isEmailVerified() && (
+        isAdmin() || request.auth.uid in existing().participantIds
+      );
+      allow list: if isEmailVerified() && (
+        isAdmin() || request.auth.uid in existing().participantIds || existing().authorId == request.auth.uid
+      );
+      allow create: if isValidId(commentId) && isActiveMember() &&
+        isValidTaskComment(incoming(), commentId) &&
+        exists(/databases/$(database)/documents/tasks/$(incoming().taskId)) &&
+        incoming().authorId == request.auth.uid &&
+        incoming().createdAt == request.time;
+      allow update: if false;
+      allow delete: if isValidId(commentId) && (isAdmin() || existing().authorId == request.auth.uid);
+    }
+
+    match /taskAttachments/{attachmentId} {
+      allow get: if isValidId(attachmentId) && isEmailVerified() && (
+        isAdmin() || request.auth.uid in existing().participantIds
+      );
+      allow list: if isEmailVerified() && (
+        isAdmin() || request.auth.uid in existing().participantIds || existing().uploadedBy == request.auth.uid
+      );
+      allow create: if isValidId(attachmentId) && isActiveMember() &&
+        isValidTaskAttachment(incoming(), attachmentId) &&
+        exists(/databases/$(database)/documents/tasks/$(incoming().taskId)) &&
+        incoming().uploadedBy == request.auth.uid &&
+        incoming().createdAt == request.time;
+      allow update: if false;
+      allow delete: if isValidId(attachmentId) && (isAdmin() || existing().uploadedBy == request.auth.uid);
+    }
+
+    match /taskReviews/{reviewId} {
+      allow get: if isValidId(reviewId) && isEmailVerified() && (
+        isAdmin() || request.auth.uid in existing().participantIds
+      );
+      allow list: if isEmailVerified() && (
+        isAdmin() || request.auth.uid in existing().participantIds || existing().actorId == request.auth.uid
+      );
+      allow create: if isValidId(reviewId) && isActiveMember() &&
+        isValidTaskReview(incoming(), reviewId) &&
+        exists(/databases/$(database)/documents/tasks/$(incoming().taskId)) &&
+        incoming().actorId == request.auth.uid &&
+        incoming().createdAt == request.time && (
+          incoming().action == 'Submitted' ||
+          (incoming().action in ['Approved', 'Revision Requested'] && isLeadOrAdmin())
+        );
+      allow update, delete: if false;
+    }
+
+    match /notifications/{notificationId} {
+      allow get: if isValidId(notificationId) && isEmailVerified() && (
+        existing().recipientId == request.auth.uid || isAdmin()
+      );
+      allow list: if isEmailVerified() && existing().recipientId == request.auth.uid;
+      allow create: if isValidId(notificationId) && isActiveMember() &&
+        isValidNotification(incoming(), notificationId) &&
+        incoming().createdBy == request.auth.uid &&
+        incoming().read == false &&
+        incoming().createdAt == request.time;
+      allow update: if isValidId(notificationId) && isEmailVerified() &&
+        existing().recipientId == request.auth.uid &&
+        isValidNotification(incoming(), notificationId) &&
+        incoming().id == existing().id &&
+        incoming().recipientId == existing().recipientId &&
+        incoming().createdBy == existing().createdBy &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['read']);
+      allow delete: if isValidId(notificationId) && isEmailVerified() && (
+        existing().recipientId == request.auth.uid || isAdmin()
+      );
+    }
+
+    match /activityLogs/{logId} {
+      allow get: if isValidId(logId) && isEmailVerified() && (
+        isAdmin() || request.auth.uid in existing().participantIds || existing().actorId == request.auth.uid
+      );
+      allow list: if isEmailVerified() && (
+        isAdmin() || request.auth.uid in existing().participantIds || existing().actorId == request.auth.uid
+      );
+      allow create: if isValidId(logId) && isActiveMember() &&
+        isValidActivityLog(incoming(), logId) &&
+        incoming().actorId == request.auth.uid &&
+        incoming().createdAt == request.time;
+      allow update, delete: if false;
+    }
+
+    match /timeEntries/{entryId} {
+      allow get: if isValidId(entryId) && isEmailVerified() && (
+        isAdmin() || existing().userId == request.auth.uid || existing().teamLeadId == request.auth.uid
+      );
+      allow list: if isEmailVerified() && (
+        isAdmin() || existing().userId == request.auth.uid || existing().teamLeadId == request.auth.uid
+      );
+      allow create: if isValidId(entryId) && isActiveMember() &&
+        isValidTimeEntry(incoming(), entryId) &&
+        exists(/databases/$(database)/documents/tasks/$(incoming().taskId)) &&
+        incoming().userId == request.auth.uid &&
+        incoming().createdAt == request.time;
+      allow update: if false;
+      allow delete: if isValidId(entryId) && (isAdmin() || existing().userId == request.auth.uid);
+    }
+  }
+}
